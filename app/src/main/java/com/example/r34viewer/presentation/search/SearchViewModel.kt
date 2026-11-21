@@ -8,7 +8,6 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.example.r34viewer.domain.model.FeedImageSize
 import com.example.r34viewer.domain.model.Post
-import com.example.r34viewer.domain.model.RatingFilter
 import com.example.r34viewer.domain.model.SearchFilters
 import com.example.r34viewer.domain.model.SortOrder
 import com.example.r34viewer.domain.model.TagSuggestion
@@ -18,6 +17,7 @@ import com.example.r34viewer.domain.usecase.GetPostsUseCase
 import com.example.r34viewer.domain.usecase.GetSearchHistoryUseCase
 import com.example.r34viewer.domain.usecase.ObserveFeedImageSizeUseCase
 import com.example.r34viewer.domain.usecase.ObserveHideAiGeneratedUseCase
+import com.example.r34viewer.domain.usecase.ObserveNegativeTagsUseCase
 import com.example.r34viewer.domain.usecase.RemoveSearchHistoryUseCase
 import com.example.r34viewer.domain.usecase.SearchTagsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -41,16 +41,16 @@ data class SearchUiState(
     val inputQuery: String = "",
     val submittedQuery: String = "",
     val hasSearched: Boolean = false,
-    val rating: RatingFilter = RatingFilter.ALL,
     val sortOrder: SortOrder = SortOrder.DEFAULT,
-    val hideAiGenerated: Boolean = false
+    val hideAiGenerated: Boolean = false,
+    val negativeTags: List<String> = emptyList()
 ) {
     val filters: SearchFilters
         get() = SearchFilters(
             query = submittedQuery,
-            rating = rating,
             sortOrder = sortOrder,
-            hideAiGenerated = hideAiGenerated
+            hideAiGenerated = hideAiGenerated,
+            negativeTags = negativeTags
         )
 
     val currentTokens: List<String>
@@ -66,6 +66,7 @@ class SearchViewModel @Inject constructor(
     private val removeSearchHistoryUseCase: RemoveSearchHistoryUseCase,
     private val clearSearchHistoryUseCase: ClearSearchHistoryUseCase,
     observeHideAiGeneratedUseCase: ObserveHideAiGeneratedUseCase,
+    observeNegativeTagsUseCase: ObserveNegativeTagsUseCase,
     observeFeedImageSizeUseCase: ObserveFeedImageSizeUseCase
 ) : ViewModel() {
 
@@ -100,6 +101,11 @@ class SearchViewModel @Inject constructor(
         viewModelScope.launch {
             observeHideAiGeneratedUseCase().collect { hideAi ->
                 _uiState.update { it.copy(hideAiGenerated = hideAi) }
+            }
+        }
+        viewModelScope.launch {
+            observeNegativeTagsUseCase().collect { tags ->
+                _uiState.update { it.copy(negativeTags = tags) }
             }
         }
     }
@@ -152,7 +158,7 @@ class SearchViewModel @Inject constructor(
         viewModelScope.launch { addSearchHistoryUseCase(q) }
     }
 
-    /** Adds a suggestion to the current query, keeping the trailing space for the next tag. */
+    /** Replaces the current token with the chosen tag, leaving the caret at its end. */
     fun acceptSuggestion(suggestion: TagSuggestion) {
         val current = currentToken(_uiState.value.inputQuery)
         val isNegative = current.startsWith("-")
@@ -167,12 +173,8 @@ class SearchViewModel @Inject constructor(
     fun removeTag(token: String) {
         _uiState.update { state ->
             val remaining = state.currentTokens.filterNot { it == token }
-            state.copy(inputQuery = remaining.joinToString(" ") + if (remaining.isEmpty()) "" else " ")
+            state.copy(inputQuery = remaining.joinToString(" "))
         }
-    }
-
-    fun onRatingChange(rating: RatingFilter) {
-        _uiState.update { it.copy(rating = rating) }
     }
 
     fun onSortChange(sortOrder: SortOrder) {
@@ -192,10 +194,10 @@ class SearchViewModel @Inject constructor(
 
     private fun replaceCurrentToken(query: String, token: String): String {
         val trimmedQuery = query.trimEnd()
-        if (trimmedQuery.isBlank()) return "$token "
+        if (trimmedQuery.isBlank()) return token
         val lastSpace = trimmedQuery.lastIndexOf(' ')
         val prefix = if (lastSpace >= 0) trimmedQuery.substring(0, lastSpace + 1) else ""
-        return "$prefix$token "
+        return "$prefix$token"
     }
 
     private companion object {

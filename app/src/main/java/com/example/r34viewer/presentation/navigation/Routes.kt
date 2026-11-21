@@ -12,9 +12,3 @@ object Routes {
     fun detail(postId: Int): String = "detail/$postId"
 }
 
-sealed class BottomNavItem(val route: String, val label: String) {
-    data object Home : BottomNavItem(Routes.HOME, "Home")
-    data object Search : BottomNavItem(Routes.SEARCH, "Search")
-    data object Favorites : BottomNavItem(Routes.FAVORITES, "Favorites")
-    data object Settings : BottomNavItem(Routes.SETTINGS, "Settings")
-}

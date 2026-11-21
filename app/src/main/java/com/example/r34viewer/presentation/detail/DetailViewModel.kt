@@ -7,11 +7,16 @@ import androidx.lifecycle.viewModelScope
 import com.example.r34viewer.BuildConfig
 import com.example.r34viewer.domain.model.FavoriteFolder
 import com.example.r34viewer.domain.model.Post
+import com.example.r34viewer.domain.usecase.AddFavoriteUseCase
+import com.example.r34viewer.domain.usecase.AddFavoritesToFolderUseCase
+import com.example.r34viewer.domain.usecase.CreateFavoriteFolderUseCase
 import com.example.r34viewer.domain.usecase.GetFavoriteByIdUseCase
+import com.example.r34viewer.domain.usecase.GetFavoriteFolderIdsUseCase
 import com.example.r34viewer.domain.usecase.GetTagTypesUseCase
 import com.example.r34viewer.domain.usecase.IsFavoriteUseCase
-import com.example.r34viewer.domain.usecase.MoveFavoritesToFolderUseCase
 import com.example.r34viewer.domain.usecase.ObserveFavoriteFoldersUseCase
+import com.example.r34viewer.domain.usecase.ObserveFullscreenMaxQualityUseCase
+import com.example.r34viewer.domain.usecase.RemoveFavoritesFromFolderUseCase
 import com.example.r34viewer.domain.usecase.ToggleFavoriteUseCase
 import com.example.r34viewer.util.SelectedPostCache
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -20,8 +25,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -38,9 +41,14 @@ class DetailViewModel @Inject constructor(
     private val selectedPostCache: SelectedPostCache,
     private val getFavoriteByIdUseCase: GetFavoriteByIdUseCase,
     private val toggleFavoriteUseCase: ToggleFavoriteUseCase,
-    private val moveFavoritesToFolderUseCase: MoveFavoritesToFolderUseCase,
+    private val addFavoriteUseCase: AddFavoriteUseCase,
+    private val addFavoritesToFolderUseCase: AddFavoritesToFolderUseCase,
+    private val createFavoriteFolderUseCase: CreateFavoriteFolderUseCase,
+    private val removeFavoritesFromFolderUseCase: RemoveFavoritesFromFolderUseCase,
+    private val getFavoriteFolderIdsUseCase: GetFavoriteFolderIdsUseCase,
     private val getTagTypesUseCase: GetTagTypesUseCase,
     observeFavoriteFoldersUseCase: ObserveFavoriteFoldersUseCase,
+    observeFullscreenMaxQualityUseCase: ObserveFullscreenMaxQualityUseCase,
     isFavoriteUseCase: IsFavoriteUseCase
 ) : ViewModel() {
 
@@ -60,6 +68,9 @@ class DetailViewModel @Inject constructor(
 
     val folders: StateFlow<List<FavoriteFolder>> = observeFavoriteFoldersUseCase()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val fullscreenMaxQuality: StateFlow<Boolean> = observeFullscreenMaxQualityUseCase()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val isFavorite: StateFlow<Boolean> = if (postId != -1) {
         isFavoriteUseCase(postId).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -124,14 +135,36 @@ class DetailViewModel @Inject constructor(
         }
     }
 
-    fun saveFavorite(folderId: Long? = null) {
+    /** Creates a new folder from the save dialog. Reports whether it was created. */
+    fun createFolder(name: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            onResult(createFavoriteFolderUseCase(name))
+        }
+    }
+
+    /** Adds the post to favorites and reports the folders it already belongs to. */
+    fun addFavoriteAndGetFolders(onReady: (Set<Long>) -> Unit) {
         val current = _uiState.value
-        if (current is DetailUiState.Success) {
-            viewModelScope.launch {
-                toggleFavoriteUseCase(current.post)
-                if (folderId != null) {
-                    moveFavoritesToFolderUseCase(listOf(current.post.id), folderId)
-                }
+        if (current !is DetailUiState.Success) return
+        viewModelScope.launch {
+            addFavoriteUseCase(current.post)
+            onReady(getFavoriteFolderIdsUseCase(current.post.id).toSet())
+        }
+    }
+
+    /** Adds the post if needed and makes its folder memberships match the dialog selection. */
+    fun saveFavorite(folderIds: List<Long> = emptyList()) {
+        val current = _uiState.value
+        if (current !is DetailUiState.Success) return
+        viewModelScope.launch {
+            addFavoriteUseCase(current.post)
+            val currentFolders = getFavoriteFolderIdsUseCase(current.post.id).toSet()
+            val desiredFolders = folderIds.toSet()
+            (desiredFolders - currentFolders).forEach { folderId ->
+                addFavoritesToFolderUseCase(listOf(current.post.id), folderId)
+            }
+            (currentFolders - desiredFolders).forEach { folderId ->
+                removeFavoritesFromFolderUseCase(listOf(current.post.id), folderId)
             }
         }
     }

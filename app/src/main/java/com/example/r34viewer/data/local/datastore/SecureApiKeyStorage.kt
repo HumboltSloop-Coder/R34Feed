@@ -34,8 +34,6 @@ class SecureApiKeyStorage @Inject constructor(
 
     fun getUserId(): String? = prefs.getString(KEY_USER_ID, null)?.takeIf { it.isNotBlank() }
 
-    fun hasCredentials(): Boolean = !getApiKey().isNullOrBlank() && !getUserId().isNullOrBlank()
-
     suspend fun saveCredentials(apiKey: String, userId: String) = withContext(Dispatchers.IO) {
         prefs.edit()
             .putString(KEY_API_KEY, apiKey.trim())

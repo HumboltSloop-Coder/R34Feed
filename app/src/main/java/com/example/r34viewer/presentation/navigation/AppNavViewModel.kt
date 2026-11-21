@@ -3,7 +3,9 @@ package com.example.r34viewer.presentation.navigation
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.r34viewer.domain.model.AppColors
 import com.example.r34viewer.domain.usecase.ImportTagCatalogUseCase
+import com.example.r34viewer.domain.usecase.ObserveCustomColorsUseCase
 import com.example.r34viewer.domain.usecase.ObserveDarkThemeUseCase
 import com.example.r34viewer.domain.usecase.ObserveHasCredentialsUseCase
 import com.example.r34viewer.util.SelectedPostCache
@@ -21,6 +23,7 @@ import javax.inject.Inject
 class AppNavViewModel @Inject constructor(
     observeHasCredentialsUseCase: ObserveHasCredentialsUseCase,
     observeDarkThemeUseCase: ObserveDarkThemeUseCase,
+    observeCustomColorsUseCase: ObserveCustomColorsUseCase,
     importTagCatalogUseCase: ImportTagCatalogUseCase,
     val selectedPostCache: SelectedPostCache
 ) : ViewModel() {
@@ -36,6 +39,9 @@ class AppNavViewModel @Inject constructor(
 
     val isDarkTheme: StateFlow<Boolean> = observeDarkThemeUseCase()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    val customColors: StateFlow<AppColors> = observeCustomColorsUseCase()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppColors())
 
     init {
         viewModelScope.launch {

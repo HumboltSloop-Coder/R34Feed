@@ -21,6 +21,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -28,12 +29,14 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,8 +46,10 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.r34viewer.domain.model.CustomColorSlot
 import com.example.r34viewer.domain.model.FeedImageSize
 import com.example.r34viewer.presentation.common.CompactTabTopBar
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,10 +60,18 @@ fun SettingsScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     var showApiKey by remember { mutableStateOf(false) }
+    var designExpanded by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(state.hasCredentials, forceSetup) {
         if (forceSetup && state.hasCredentials) {
             onApiKeyConfigured()
+        }
+    }
+
+    LaunchedEffect(state.message) {
+        if (state.message != null) {
+            delay(4_000)
+            viewModel.consumeMessage()
         }
     }
 
@@ -211,6 +224,48 @@ fun SettingsScreen(
 
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Diseño", style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "Elige los colores principales, secundarios y de fondo de la app.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(onClick = { designExpanded = !designExpanded }) {
+                                Text(if (designExpanded) "Ocultar" else "Abrir")
+                            }
+                        }
+
+                        if (designExpanded) {
+                            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                CustomColorSlot.entries.forEach { slot ->
+                                    val (title, value) = when (slot) {
+                                        CustomColorSlot.PRIMARY -> "Color primario" to state.customColors.primary
+                                        CustomColorSlot.SECONDARY -> "Color secundario" to state.customColors.secondary
+                                        CustomColorSlot.BACKGROUND -> "Color de fondo" to state.customColors.background
+                                    }
+                                    ColorEditor(
+                                        title = title,
+                                        value = value,
+                                        onValueChange = { hex -> viewModel.setCustomColor(slot, hex) }
+                                    )
+                                }
+                                TextButton(onClick = viewModel::resetCustomColors) {
+                                    Text("Restablecer colores")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text("Feed & content", style = MaterialTheme.typography.titleMedium)
 
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -248,6 +303,77 @@ fun SettingsScreen(
                                 checked = state.hideAiGenerated,
                                 onCheckedChange = viewModel::setHideAiGenerated
                             )
+                        }
+
+                        HorizontalDivider()
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Máxima calidad en pantalla completa")
+                                Text(
+                                    "Carga la imagen original al entrar en pantalla completa (puede consumir más datos y memoria).",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = state.fullscreenMaxQuality,
+                                onCheckedChange = viewModel::setFullscreenMaxQuality
+                            )
+                        }
+                    }
+                }
+
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Tags negativos", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Se añaden como -tag al feed y a todas las búsquedas. No afectan a los favoritos guardados.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = state.negativeTagDraft,
+                                onValueChange = viewModel::onNegativeTagInputChange,
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Tag a excluir") },
+                                placeholder = { Text("Ej. ai_generated") },
+                                singleLine = true
+                            )
+                            Button(onClick = viewModel::addNegativeTag) {
+                                Text("Añadir")
+                            }
+                        }
+                        if (state.negativeTags.isEmpty()) {
+                            Text(
+                                "No hay tags negativos configurados.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                state.negativeTags.forEach { tag ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("-$tag", style = MaterialTheme.typography.bodyLarge)
+                                        IconButton(onClick = { viewModel.removeNegativeTag(tag) }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Eliminar -$tag")
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

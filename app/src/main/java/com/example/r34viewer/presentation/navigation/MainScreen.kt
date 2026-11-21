@@ -16,26 +16,31 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.flow.StateFlow
+import androidx.navigation.navArgument
 import com.example.r34viewer.domain.model.Post
+import com.example.r34viewer.presentation.detail.DetailScreen
 import com.example.r34viewer.presentation.favorites.FavoritesScreen
 import com.example.r34viewer.presentation.feed.FeedScreen
 import com.example.r34viewer.presentation.search.SearchScreen
 import com.example.r34viewer.presentation.settings.SettingsScreen
+import com.example.r34viewer.util.SelectedPostCache
+import kotlinx.coroutines.flow.StateFlow
 
 private data class BottomItem(
     val route: String,
@@ -53,29 +58,49 @@ private val bottomItems = listOf(
 
 @Composable
 fun MainScreen(
-    onPostClick: (Post, List<Post>) -> Unit,
+    onPostSelected: (Post, List<Post>) -> Unit,
     pendingTagSearch: StateFlow<String?>,
-    onTagSearchConsumed: () -> Unit
+    onTagSearchConsumed: () -> Unit,
+    isFullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    onSetFullscreen: (Boolean) -> Unit,
+    onRequestTagSearch: (String) -> Unit,
+    selectedPostCache: SelectedPostCache
 ) {
     val navController = rememberNavController()
     val tagSearch by pendingTagSearch.collectAsStateWithLifecycle()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
     var initialTagQuery by remember { mutableStateOf<String?>(null) }
 
-    androidx.compose.runtime.LaunchedEffect(tagSearch) {
+    val isDetail = currentDestination?.route == Routes.DETAIL
+
+    LaunchedEffect(tagSearch) {
         tagSearch?.let { tag ->
             initialTagQuery = tag
-            navController.navigate(Routes.SEARCH) { launchSingleTop = true }
+            navController.navigate(Routes.SEARCH) {
+                popUpTo(Routes.DETAIL) { inclusive = true }
+                launchSingleTop = true
+            }
             onTagSearchConsumed()
         }
     }
 
+    val onPostClick: (Post, List<Post>) -> Unit = { post, posts ->
+        onPostSelected(post, posts)
+        navController.navigate(Routes.detail(post.id))
+    }
+
     Scaffold(
-        bottomBar = { BottomBar(navController = navController) }
+        bottomBar = {
+            if (!isDetail) BottomBar(navController, currentDestination)
+        }
     ) { innerPadding ->
         NavHost(
             navController = navController,
             startDestination = Routes.HOME,
-            modifier = Modifier.padding(innerPadding)
+            // The detail screen is edge-to-edge and handles its own insets.
+            modifier = if (isDetail) Modifier else Modifier.padding(innerPadding)
         ) {
             composable(Routes.HOME) {
                 FeedScreen(onPostClick = onPostClick)
@@ -93,15 +118,52 @@ fun MainScreen(
             composable(Routes.SETTINGS) {
                 SettingsScreen(forceSetup = false)
             }
+            composable(
+                route = Routes.DETAIL,
+                arguments = listOf(navArgument("postId") { type = NavType.StringType })
+            ) {
+                DetailScreen(
+                    isFullscreen = isFullscreen,
+                    onToggleFullscreen = onToggleFullscreen,
+                    onSetFullscreen = onSetFullscreen,
+                    onBack = {
+                        onSetFullscreen(false)
+                        navController.popBackStack()
+                    },
+                    onSearchTag = { tag ->
+                        onSetFullscreen(false)
+                        onRequestTagSearch(tag)
+                    },
+                    onSwipePrevious = { postId ->
+                        val adjacent = selectedPostCache.getAdjacent(postId, -1)
+                        if (adjacent == null) {
+                            if (!isFullscreen) {
+                                onSetFullscreen(false)
+                                navController.popBackStack()
+                            }
+                        } else {
+                            navController.navigate(Routes.detail(adjacent.id)) {
+                                popUpTo(Routes.DETAIL) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    },
+                    onSwipeNext = { postId ->
+                        selectedPostCache.getAdjacent(postId, 1)?.let { adjacent ->
+                            navController.navigate(Routes.detail(adjacent.id)) {
+                                popUpTo(Routes.DETAIL) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
+                    }
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun BottomBar(navController: NavHostController) {
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = navBackStackEntry?.destination
-
+private fun BottomBar(navController: androidx.navigation.NavHostController, currentDestination: NavDestination?) {
     NavigationBar {
         bottomItems.forEach { item ->
             val selected = currentDestination?.hierarchy?.any { it.route == item.route } == true

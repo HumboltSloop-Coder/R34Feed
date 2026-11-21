@@ -7,13 +7,7 @@ import javax.inject.Inject
 class SearchTagsUseCase @Inject constructor(
     private val repository: TagRepository
 ) {
-    suspend operator fun invoke(prefix: String): List<TagSuggestion> {
-        val token = prefix.trim().removePrefix("-")
-        if (token.length < MIN_QUERY_LENGTH) return emptyList()
-        return repository.searchTags(token)
-    }
-
-    companion object {
-        private const val MIN_QUERY_LENGTH = 2
-    }
+    // Trimming, negative-prefix removal and the minimum length are enforced by the
+    // repository, which is the single source of truth for autocomplete requests.
+    suspend operator fun invoke(prefix: String): List<TagSuggestion> = repository.searchTags(prefix)
 }

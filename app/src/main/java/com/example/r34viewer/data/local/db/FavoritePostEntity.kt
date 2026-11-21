@@ -27,6 +27,7 @@ data class FavoritePostEntity(
     val createdAt: String?,
     val savedAt: Long,
     val folderId: Long? = null,
+    val priority: Int = 0,
     val profileUserId: String = ""
 )
 
@@ -47,12 +48,14 @@ fun FavoritePostEntity.toDomain(): Post = Post(
     owner = owner,
     source = source,
     hasNotes = hasNotes,
-    createdAt = createdAt
+    createdAt = createdAt,
+    favoritePriority = priority
 )
 
 fun Post.toFavoriteEntity(
     savedAt: Long = System.currentTimeMillis(),
     folderId: Long? = null,
+    priority: Int = 0,
     profileUserId: String = ""
 ): FavoritePostEntity =
     FavoritePostEntity(
@@ -75,5 +78,6 @@ fun Post.toFavoriteEntity(
         createdAt = createdAt,
         savedAt = savedAt,
         folderId = folderId,
+        priority = priority,
         profileUserId = profileUserId
     )

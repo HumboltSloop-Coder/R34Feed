@@ -7,8 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
@@ -40,8 +40,11 @@ import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,11 +52,13 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -61,7 +66,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,6 +80,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
@@ -106,6 +111,7 @@ import kotlin.math.abs
 fun DetailScreen(
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
+    onSetFullscreen: (Boolean) -> Unit,
     onBack: () -> Unit,
     onSearchTag: (String) -> Unit,
     onSwipePrevious: (Int) -> Unit,
@@ -118,9 +124,15 @@ fun DetailScreen(
     val tagTypes by viewModel.tagTypes.collectAsStateWithLifecycle()
     val tagTypesLoading by viewModel.tagTypesLoading.collectAsStateWithLifecycle()
     val tagTypesError by viewModel.tagTypesError.collectAsStateWithLifecycle()
+    val fullscreenMaxQuality by viewModel.fullscreenMaxQuality.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var animatedImageLoading by remember { mutableStateOf(false) }
-    var showSaveToFolderDialog by rememberSaveable { mutableStateOf(false) }
+    // Not saveable: after process death the selected folders would be lost and confirming
+    // would silently clear existing memberships. Dismiss the dialog instead.
+    var showSaveToFolderDialog by remember { mutableStateOf(false) }
+    var selectedFolderIds by remember { mutableStateOf(emptySet<Long>()) }
+    var newFolderName by remember { mutableStateOf("") }
+    var folderNameError by remember { mutableStateOf(false) }
     val activePostId = (uiState as? DetailUiState.Success)?.post?.id
     var zoomState by remember(activePostId) { mutableStateOf(ImageZoomState()) }
     val view = LocalView.current
@@ -130,11 +142,26 @@ fun DetailScreen(
         if (isFullscreen) zoomState = ImageZoomState()
         onToggleFullscreen()
     }
-    BackHandler(enabled = isFullscreen || zoomState.scale > 1f) {
+    val enterFullscreen = { onSetFullscreen(true) }
+    val exitFullscreen = {
+        zoomState = ImageZoomState()
+        onSetFullscreen(false)
+    }
+    val openFolderPicker = {
+        selectedFolderIds = emptySet()
+        newFolderName = ""
+        folderNameError = false
+        showSaveToFolderDialog = true
+    }
+    val favoriteFromLongPress = {
+        openFolderPicker()
+        viewModel.addFavoriteAndGetFolders { ids -> selectedFolderIds = ids }
+    }
+    BackHandler(enabled = !showSaveToFolderDialog && (isFullscreen || zoomState.scale > 1f)) {
         if (zoomState.scale > 1f) {
             zoomState = ImageZoomState()
         } else {
-            onToggleFullscreen()
+            onSetFullscreen(false)
         }
     }
 
@@ -173,12 +200,15 @@ fun DetailScreen(
                     actions = {
                         if (uiState is DetailUiState.Success) {
                             val post = (uiState as DetailUiState.Success).post
-                            IconButton(onClick = onToggleFullscreen) {
+                            IconButton(onClick = toggleFullscreen) {
                                 Icon(Icons.Default.Fullscreen, contentDescription = "Full screen")
                             }
                             IconButton(onClick = {
-                                if (isFavorite) viewModel.toggleFavorite()
-                                else showSaveToFolderDialog = true
+                                if (isFavorite) {
+                                    viewModel.toggleFavorite()
+                                } else {
+                                    openFolderPicker()
+                                }
                             }) {
                                 Icon(
                                     imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
@@ -214,6 +244,10 @@ fun DetailScreen(
                         tagTypesError = tagTypesError,
                         isFullscreen = isFullscreen,
                         onToggleFullscreen = toggleFullscreen,
+                        onEnterFullscreen = enterFullscreen,
+                        onExitFullscreen = exitFullscreen,
+                        fullscreenMaxQuality = fullscreenMaxQuality,
+                        onFavoriteLongPress = favoriteFromLongPress,
                         zoomState = zoomState,
                         onZoomChange = { zoomState = it },
                         onSearchTag = onSearchTag,
@@ -239,46 +273,112 @@ fun DetailScreen(
 
     if (showSaveToFolderDialog) {
         AlertDialog(
-            onDismissRequest = {
-                showSaveToFolderDialog = false
-                viewModel.saveFavorite()
-            },
+            onDismissRequest = { showSaveToFolderDialog = false },
             title = { Text("Guardar en favoritos") },
             text = {
                 Column(
                     modifier = Modifier
-                        .heightIn(max = 320.dp)
+                        .heightIn(max = 360.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
+                    // Create a folder first when none of the existing ones fits.
                     Text(
-                        text = "Elige una carpeta para este post.",
+                        text = "¿No encuentras una carpeta adecuada? Crea una nueva:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = newFolderName,
+                            onValueChange = {
+                                newFolderName = it
+                                folderNameError = false
+                            },
+                            label = { Text("Nueva carpeta") },
+                            singleLine = true,
+                            isError = folderNameError,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(
+                            onClick = {
+                                val name = newFolderName.trim()
+                                if (name.isBlank()) {
+                                    folderNameError = true
+                                    return@Button
+                                }
+                                viewModel.createFolder(name) { created ->
+                                    folderNameError = !created
+                                    if (created) newFolderName = ""
+                                }
+                            },
+                            enabled = newFolderName.isNotBlank()
+                        ) {
+                            Text("Crear")
+                        }
+                    }
+                    if (folderNameError) {
+                        Text(
+                            text = "No se pudo crear (nombre vacío o duplicado).",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                    Text(
+                        text = "Elige una o varias carpetas para este post.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     folders.forEach { folder ->
-                        TextButton(
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                showSaveToFolderDialog = false
-                                viewModel.saveFavorite(folder.id)
-                            }
+                        val checked = folder.id in selectedFolderIds
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedFolderIds = if (checked) {
+                                        selectedFolderIds - folder.id
+                                    } else {
+                                        selectedFolderIds + folder.id
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = {
+                                    selectedFolderIds = if (checked) {
+                                        selectedFolderIds - folder.id
+                                    } else {
+                                        selectedFolderIds + folder.id
+                                    }
+                                }
+                            )
                             Icon(Icons.Default.Folder, contentDescription = null)
                             Text(folder.name, modifier = Modifier.padding(start = 8.dp))
                         }
                     }
-                    TextButton(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = {
-                            showSaveToFolderDialog = false
-                            viewModel.saveFavorite()
-                        }
-                    ) {
-                        Text("Sin carpeta")
-                    }
                 }
             },
-            confirmButton = {}
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSaveToFolderDialog = false
+                        viewModel.saveFavorite(selectedFolderIds.toList())
+                    }
+                ) {
+                    Text("Guardar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveToFolderDialog = false }) {
+                    Text("Cancelar")
+                }
+            }
         )
     }
 }
@@ -292,6 +392,10 @@ private fun PostDetailContent(
     tagTypesError: Boolean,
     isFullscreen: Boolean,
     onToggleFullscreen: () -> Unit,
+    onEnterFullscreen: () -> Unit,
+    onExitFullscreen: () -> Unit,
+    fullscreenMaxQuality: Boolean,
+    onFavoriteLongPress: () -> Unit,
     zoomState: ImageZoomState,
     onZoomChange: (ImageZoomState) -> Unit,
     onSearchTag: (String) -> Unit,
@@ -300,6 +404,7 @@ private fun PostDetailContent(
     onAnimatedLoadingChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     Box(modifier = modifier.background(if (isFullscreen) Color.Black else Color.Transparent)) {
         Column(
             modifier = if (isFullscreen) {
@@ -318,7 +423,10 @@ private fun PostDetailContent(
                 zoomState = zoomState,
                 onZoomChange = onZoomChange,
                 isFullscreen = isFullscreen,
-                onEnterFullscreen = onToggleFullscreen,
+                onEnterFullscreen = onEnterFullscreen,
+                onExitFullscreen = onExitFullscreen,
+                fullscreenMaxQuality = fullscreenMaxQuality,
+                onFavoriteLongPress = onFavoriteLongPress,
                 onAnimatedLoadingChanged = onAnimatedLoadingChanged,
                 backgroundColor = if (isFullscreen) Color.Black else MaterialTheme.colorScheme.surfaceVariant,
                 modifier = if (isFullscreen) {
@@ -352,7 +460,18 @@ private fun PostDetailContent(
                         InfoRow(title = "Owner", value = post.owner)
                     }
                     if (post.source.isNotBlank()) {
-                        InfoRow(title = "Source", value = post.source)
+                        val source = post.source.trim()
+                        val sourceUrl = when {
+                            source.startsWith("http://", ignoreCase = true) ||
+                                source.startsWith("https://", ignoreCase = true) -> source
+                            source.startsWith("www.", ignoreCase = true) -> "https://$source"
+                            else -> null
+                        }
+                        InfoRow(
+                            title = "Source",
+                            value = source,
+                            onClick = sourceUrl?.let { url -> { openInBrowser(context, url) } }
+                        )
                     }
                     InfoRow(title = "Has notes", value = if (post.hasNotes) "Yes" else "No")
 
@@ -451,6 +570,9 @@ private fun PostMedia(
     onZoomChange: (ImageZoomState) -> Unit,
     isFullscreen: Boolean,
     onEnterFullscreen: () -> Unit,
+    onExitFullscreen: () -> Unit,
+    fullscreenMaxQuality: Boolean,
+    onFavoriteLongPress: () -> Unit,
     onAnimatedLoadingChanged: (Boolean) -> Unit,
     backgroundColor: Color,
     modifier: Modifier = Modifier
@@ -459,27 +581,76 @@ private fun PostMedia(
     val onReload = { reloadKey++ }
     val swipeThresholdPx = with(LocalDensity.current) { 72.dp.toPx() }
 
-    if (post.isVideo) {
-        LaunchedEffect(post.id) { onAnimatedLoadingChanged(false) }
-        VideoPlayer(
-            url = post.playbackUrl,
-            reloadKey = reloadKey,
-            modifier = modifier
-                .background(Color.Black)
-                .pointerInput(post.id) { detectTapGestures(onDoubleTap = { onReload() }) }
-                .postSwipeGestures(post.id, swipeThresholdPx, onSwipePrevious, onSwipeNext)
-        )
-        return
-    }
-
-    val context = LocalContext.current
+    // Shared by every media type so pinch/zoom and favorite long-press behave identically.
+    // The flag is set by the manipulation gesture while two or more fingers are down.
+    val multiPointerActive = remember { mutableStateOf(false) }
     val latestZoomState = rememberUpdatedState(zoomState)
     val latestOnZoomChange = rememberUpdatedState(onZoomChange)
     val latestIsFullscreen = rememberUpdatedState(isFullscreen)
     val latestOnEnterFullscreen = rememberUpdatedState(onEnterFullscreen)
+    val latestOnExitFullscreen = rememberUpdatedState(onExitFullscreen)
     val latestOnSwipePrevious = rememberUpdatedState(onSwipePrevious)
     val latestOnSwipeNext = rememberUpdatedState(onSwipeNext)
-    val imageUrl = if (post.isAnimated) post.fileUrl.ifBlank { post.detailImageUrl } else post.detailImageUrl
+    val latestOnFavoriteLongPress = rememberUpdatedState(onFavoriteLongPress)
+
+    val tapAndFavorite = Modifier.pointerInput(post.id) {
+        detectTapGestures(
+            onDoubleTap = { onReload() },
+            onLongPress = {
+                // Two fingers mean the user is pinching, not saving a favorite.
+                if (!multiPointerActive.value) latestOnFavoriteLongPress.value()
+            }
+        )
+    }
+    val manipulationGestures = Modifier.imageManipulationGestures(
+        postId = post.id,
+        imageWidth = post.width,
+        imageHeight = post.height,
+        zoomState = latestZoomState,
+        isFullscreen = latestIsFullscreen,
+        onZoomChange = latestOnZoomChange,
+        onEnterFullscreen = latestOnEnterFullscreen,
+        onExitFullscreen = latestOnExitFullscreen,
+        swipeThresholdPx = swipeThresholdPx,
+        onSwipePrevious = latestOnSwipePrevious,
+        onSwipeNext = latestOnSwipeNext,
+        multiPointerActive = multiPointerActive
+    )
+
+    if (post.isVideo) {
+        LaunchedEffect(post.id) { onAnimatedLoadingChanged(false) }
+        DisposableEffect(Unit) {
+            onDispose { onAnimatedLoadingChanged(false) }
+        }
+        Box(
+            modifier = modifier
+                .background(Color.Black)
+                .clipToBounds()
+                .then(tapAndFavorite)
+                .then(manipulationGestures)
+        ) {
+            VideoPlayer(
+                url = post.playbackUrl,
+                reloadKey = reloadKey,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = zoomState.scale
+                        scaleY = zoomState.scale
+                        translationX = zoomState.offset.x
+                        translationY = zoomState.offset.y
+                    }
+            )
+        }
+        return
+    }
+
+    val context = LocalContext.current
+    val imageUrl = when {
+        post.isAnimated -> post.fileUrl.ifBlank { post.detailImageUrl }
+        isFullscreen && fullscreenMaxQuality && post.fileUrl.isNotBlank() -> post.fileUrl
+        else -> post.detailImageUrl
+    }
     val isGif = post.isAnimated
     var isLoading by remember(post.id, reloadKey, imageUrl) { mutableStateOf(true) }
 
@@ -504,25 +675,8 @@ private fun PostMedia(
         modifier = modifier
             .background(backgroundColor)
             .clipToBounds()
-            .pointerInput(post.id, isGif) {
-                detectTapGestures(
-                    onDoubleTap = {
-                        if (isGif) onReload()
-                    }
-                )
-            }
-            .imageManipulationGestures(
-                postId = post.id,
-                imageWidth = post.width,
-                imageHeight = post.height,
-                zoomState = latestZoomState,
-                isFullscreen = latestIsFullscreen,
-                onZoomChange = latestOnZoomChange,
-                onEnterFullscreen = latestOnEnterFullscreen,
-                swipeThresholdPx = swipeThresholdPx,
-                onSwipePrevious = latestOnSwipePrevious,
-                onSwipeNext = latestOnSwipeNext
-            )
+            .then(tapAndFavorite)
+            .then(manipulationGestures)
     ) {
         key(reloadKey) {
             SubcomposeAsyncImage(
@@ -576,9 +730,11 @@ private fun Modifier.imageManipulationGestures(
     isFullscreen: State<Boolean>,
     onZoomChange: State<(ImageZoomState) -> Unit>,
     onEnterFullscreen: State<() -> Unit>,
+    onExitFullscreen: State<() -> Unit>,
     swipeThresholdPx: Float,
     onSwipePrevious: State<() -> Unit>,
-    onSwipeNext: State<() -> Unit>
+    onSwipeNext: State<() -> Unit>,
+    multiPointerActive: MutableState<Boolean>
 ): Modifier = pointerInput(postId) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false)
@@ -591,10 +747,17 @@ private fun Modifier.imageManipulationGestures(
         var horizontalGesture = false
         var hadMultiplePointers = false
         var transformStarted = false
+        // Leaving fullscreen requires a fresh pinch-in started at scale 1, i.e. after the
+        // zoom-out gesture has ended. It can never happen in the gesture that zooms out.
+        val canExitThisGesture = isFullscreen.value && zoomState.value.scale <= 1f
+        var zoomedInThisGesture = false
+        var enterRequested = false
+        var exitRequested = false
 
         do {
             val event = awaitPointerEvent()
             val pressed = event.changes.filter { it.pressed }
+            multiPointerActive.value = pressed.size >= 2
 
             when {
                 pressed.size >= 2 -> {
@@ -646,8 +809,20 @@ private fun Modifier.imageManipulationGestures(
                                 )
                             )
                         )
-                        if (newScale > 1f && !isFullscreen.value) {
+                        if (newScale > 1f) zoomedInThisGesture = true
+                        if (newScale > 1f && !isFullscreen.value && !enterRequested) {
+                            enterRequested = true
                             onEnterFullscreen.value()
+                        }
+                        // Only a NEW pinch-in started at scale 1 leaves fullscreen. The gesture
+                        // that reduced the zoom to 1 must end first (a pause), then pinch again.
+                        if (canExitThisGesture && !zoomedInThisGesture && zoomChange < 1f &&
+                            !exitRequested
+                        ) {
+                            exitRequested = true
+                            // Do not let the same gesture immediately re-enter fullscreen.
+                            enterRequested = true
+                            onExitFullscreen.value()
                         }
                         pressed.forEach { it.consume() }
                     }
@@ -701,6 +876,7 @@ private fun Modifier.imageManipulationGestures(
             previousPointerCount = pressed.size
         } while (event.changes.any { it.pressed })
 
+        multiPointerActive.value = false
         val finalZoom = zoomState.value
         if (!hadMultiplePointers && finalZoom.scale <= 1f && horizontalGesture) {
             when {
@@ -709,29 +885,6 @@ private fun Modifier.imageManipulationGestures(
             }
         }
     }
-}
-
-private fun Modifier.postSwipeGestures(
-    postId: Int,
-    thresholdPx: Float,
-    onSwipePrevious: () -> Unit,
-    onSwipeNext: () -> Unit
-): Modifier = pointerInput(postId, thresholdPx, onSwipePrevious, onSwipeNext) {
-    var horizontalDrag = 0f
-    detectHorizontalDragGestures(
-        onHorizontalDrag = { change, dragAmount ->
-            change.consume()
-            horizontalDrag += dragAmount
-        },
-        onDragEnd = {
-            when {
-                horizontalDrag >= thresholdPx -> onSwipePrevious()
-                horizontalDrag <= -thresholdPx -> onSwipeNext()
-            }
-            horizontalDrag = 0f
-        },
-        onDragCancel = { horizontalDrag = 0f }
-    )
 }
 
 /** Media3/ExoPlayer instance scoped to the detail screen; released when disposed. */
@@ -791,10 +944,16 @@ private fun MetaChip(label: String, value: String) {
 }
 
 @Composable
-private fun InfoRow(title: String, value: String) {
+private fun InfoRow(title: String, value: String, onClick: (() -> Unit)? = null) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(text = title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-        Text(text = value, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (onClick == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+            textDecoration = if (onClick == null) null else TextDecoration.Underline,
+            modifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
+        )
     }
 }
 

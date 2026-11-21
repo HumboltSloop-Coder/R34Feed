@@ -17,7 +17,8 @@ data class Post(
     val owner: String,
     val source: String,
     val hasNotes: Boolean,
-    val createdAt: String?
+    val createdAt: String?,
+    val favoritePriority: Int = 0
 ) {
     val displayImageUrl: String
         get() = sampleUrl.ifBlank { previewUrl.ifBlank { fileUrl } }

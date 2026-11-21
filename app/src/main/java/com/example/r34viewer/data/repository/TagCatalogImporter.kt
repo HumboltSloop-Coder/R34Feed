@@ -54,13 +54,16 @@ class TagCatalogImporter @Inject constructor(
                 if (batch.isEmpty()) break
 
                 database.withTransaction {
-                    val statement = database.openHelper.writableDatabase.compileStatement(statementSql)
-                    batch.forEach { (name, type) ->
-                        statement.clearBindings()
-                        statement.bindString(1, name)
-                        statement.bindLong(2, type.toLong())
-                        statement.executeInsert()
-                    }
+                    database.openHelper.writableDatabase
+                        .compileStatement(statementSql)
+                        .use { statement ->
+                            batch.forEach { (name, type) ->
+                                statement.clearBindings()
+                                statement.bindString(1, name)
+                                statement.bindLong(2, type.toLong())
+                                statement.executeInsert()
+                            }
+                        }
                 }
                 importedCount += batch.size
             }

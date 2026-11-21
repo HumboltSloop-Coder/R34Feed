@@ -21,7 +21,6 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.xmlpull.v1.XmlPullParser
-import retrofit2.HttpException
 import java.io.StringReader
 import java.time.LocalDate
 import javax.inject.Inject
@@ -99,7 +98,9 @@ class TagRepositoryImpl @Inject constructor(
                         TagTypeFetchResult(
                             type = null,
                             failed = true,
-                            shouldCache = !error.isAuthenticationFailure()
+                            // A transient/network failure must not be cached as a definitive
+                            // "unknown tag" for the rest of the month.
+                            shouldCache = false
                         )
                     }
                     tag.lowercase() to result
@@ -114,7 +115,13 @@ class TagRepositoryImpl @Inject constructor(
                 TagTypeEntity(
                     name = name,
                     type = result.type,
-                    apiCheckedAtEpochDay = LocalDate.now().toEpochDay()
+                    // A successful lookup that returned no type is retried next time: the
+                    // API only returns a limited number of matches for a name pattern.
+                    apiCheckedAtEpochDay = if (result.type == null) {
+                        null
+                    } else {
+                        LocalDate.now().toEpochDay()
+                    }
                 )
             }
         }
@@ -196,17 +203,12 @@ class TagRepositoryImpl @Inject constructor(
         val shouldCache: Boolean = true
     )
 
-    private fun Exception.isAuthenticationFailure(): Boolean =
-        ((this as? HttpException)?.code()?.let { it in AUTH_ERROR_CODES } == true) ||
-            message.orEmpty().contains("authentication", ignoreCase = true)
-
     private companion object {
         const val MIN_PREFIX_LENGTH = 2
         const val MAX_SUGGESTIONS = 10
         const val TAG_TYPE_LOOKUP_CONCURRENCY = 4
         const val TAG_TYPE_LOOKUP_LIMIT = 10
         const val TAG = "TagRepositoryImpl"
-        val AUTH_ERROR_CODES = setOf(401, 403)
         val POST_COUNT_PATTERN = Regex("""\(([\d,]+)\)\s*$""")
     }
 }

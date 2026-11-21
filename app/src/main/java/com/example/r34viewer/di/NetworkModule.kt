@@ -1,5 +1,6 @@
 package com.example.r34viewer.di
 
+import com.example.r34viewer.BuildConfig
 import com.example.r34viewer.data.remote.api.ApiKeyInterceptor
 import com.example.r34viewer.data.remote.api.Rule34ApiService
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
@@ -31,12 +32,15 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOkHttpClient(apiKeyInterceptor: ApiKeyInterceptor): OkHttpClient {
-        val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BASIC
+        val client = OkHttpClient.Builder().addInterceptor(apiKeyInterceptor)
+        // BASIC logs the full URL, which contains api_key and user_id. Never enable it in
+        // release builds; debug uses HEADERS so credentials are not written to Logcat.
+        if (BuildConfig.DEBUG) {
+            client.addInterceptor(
+                HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.HEADERS }
+            )
         }
-        return OkHttpClient.Builder()
-            .addInterceptor(apiKeyInterceptor)
-            .addInterceptor(logging)
+        return client
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .build()

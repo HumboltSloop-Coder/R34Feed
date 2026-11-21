@@ -4,6 +4,9 @@ import com.example.r34viewer.domain.model.FavoriteFolder
 import com.example.r34viewer.domain.model.FavoriteFolderFilter
 import com.example.r34viewer.domain.model.FavoriteImportResult
 import com.example.r34viewer.domain.model.FavoriteProfile
+import com.example.r34viewer.domain.model.FavoriteTag
+import com.example.r34viewer.domain.model.FavoriteTagBookmark
+import com.example.r34viewer.domain.model.FolderMembership
 import com.example.r34viewer.domain.model.Post
 import com.example.r34viewer.domain.repository.PostRepository
 import kotlinx.coroutines.flow.Flow
@@ -12,11 +15,21 @@ import javax.inject.Inject
 class ObserveFavoritesUseCase @Inject constructor(
     private val repository: PostRepository
 ) {
-    operator fun invoke(): Flow<List<Post>> = repository.getFavorites()
-    operator fun invoke(filter: FavoriteFolderFilter): Flow<List<Post>> = repository.getFavorites(filter)
-    operator fun invoke(filter: FavoriteFolderFilter, profileUserId: String?): Flow<List<Post>> =
-        if (profileUserId == null) repository.getFavorites(filter)
-        else repository.getProfileFavorites(profileUserId, filter)
+    operator fun invoke(descending: Boolean = false): Flow<List<Post>> =
+        repository.getFavorites(descending)
+
+    operator fun invoke(
+        filter: FavoriteFolderFilter,
+        descending: Boolean = false
+    ): Flow<List<Post>> = repository.getFavorites(filter, descending)
+
+    operator fun invoke(
+        filter: FavoriteFolderFilter,
+        profileUserId: String?,
+        descending: Boolean = false
+    ): Flow<List<Post>> =
+        if (profileUserId == null) repository.getFavorites(filter, descending)
+        else repository.getProfileFavorites(profileUserId, filter, descending)
 }
 
 class ObserveFavoriteFoldersUseCase @Inject constructor(
@@ -52,11 +65,32 @@ class RemoveFavoritesUseCase @Inject constructor(
     suspend operator fun invoke(postIds: List<Int>) = repository.removeFavorites(postIds)
 }
 
-class MoveFavoritesToFolderUseCase @Inject constructor(
+class AddFavoritesToFolderUseCase @Inject constructor(
     private val repository: PostRepository
 ) {
-    suspend operator fun invoke(postIds: List<Int>, folderId: Long?) =
-        repository.moveFavoritesToFolder(postIds, folderId)
+    suspend operator fun invoke(postIds: List<Int>, folderId: Long) =
+        repository.addFavoritesToFolder(postIds, folderId)
+}
+
+class RemoveFavoritesFromFolderUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(postIds: List<Int>, folderId: Long) =
+        repository.removeFavoritesFromFolder(postIds, folderId)
+}
+
+class ClearFavoritesFoldersUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(postIds: List<Int>) =
+        repository.clearFavoritesFolders(postIds)
+}
+
+class ObserveFavoriteFolderMembershipsUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    operator fun invoke(profileUserId: String): Flow<List<FolderMembership>> =
+        repository.getFavoriteFolderMemberships(profileUserId)
 }
 
 class IsFavoriteUseCase @Inject constructor(
@@ -69,6 +103,18 @@ class ToggleFavoriteUseCase @Inject constructor(
     private val repository: PostRepository
 ) {
     suspend operator fun invoke(post: Post) = repository.toggleFavorite(post)
+}
+
+class AddFavoriteUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(post: Post) = repository.addFavorite(post)
+}
+
+class GetFavoriteFolderIdsUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(postId: Int): List<Long> = repository.getFavoriteFolderIds(postId)
 }
 
 class GetFavoriteByIdUseCase @Inject constructor(
@@ -90,4 +136,48 @@ class ImportFavoritesUseCase @Inject constructor(
         backupText: String,
         onProgress: (completed: Int, total: Int) -> Unit
     ): FavoriteImportResult = repository.importFavorites(backupText, onProgress)
+}
+
+class ObserveFavoriteTagsUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    operator fun invoke(): Flow<List<FavoriteTag>> = repository.getFavoriteTags()
+}
+
+class AddFavoriteTagUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(query: String): Boolean = repository.addFavoriteTag(query)
+}
+
+class RemoveFavoriteTagUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(tagId: Long) = repository.removeFavoriteTag(tagId)
+}
+
+class ObserveFavoriteTagBookmarksUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    operator fun invoke(): Flow<List<FavoriteTagBookmark>> = repository.getFavoriteTagBookmarks()
+}
+
+class SaveFavoriteTagBookmarkUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(bookmark: FavoriteTagBookmark): Long =
+        repository.saveFavoriteTagBookmark(bookmark)
+}
+
+class DeleteFavoriteTagBookmarkUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(bookmarkId: Long) = repository.deleteFavoriteTagBookmark(bookmarkId)
+}
+
+class SwapFavoritePrioritiesUseCase @Inject constructor(
+    private val repository: PostRepository
+) {
+    suspend operator fun invoke(firstId: Int, secondId: Int) =
+        repository.swapFavoritePriorities(firstId, secondId)
 }

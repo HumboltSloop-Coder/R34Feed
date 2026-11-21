@@ -26,7 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,7 +39,6 @@ import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.r34viewer.domain.model.Post
-import com.example.r34viewer.domain.model.RatingFilter
 import com.example.r34viewer.domain.model.SortOrder
 import com.example.r34viewer.presentation.common.CompactTabTopBar
 import com.example.r34viewer.presentation.common.EmptyState
@@ -57,11 +58,16 @@ fun FeedScreen(
     val posts = viewModel.posts.collectAsLazyPagingItems()
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    val showScrollToTop by remember {
+        derivedStateOf {
+            gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0
+        }
+    }
 
     Scaffold(
         topBar = { CompactTabTopBar("R34Feed") },
         floatingActionButton = {
-            if (gridState.firstVisibleItemIndex > 0 || gridState.firstVisibleItemScrollOffset > 0) {
+            if (showScrollToTop) {
                 FloatingActionButton(
                     onClick = {
                         scope.launch { gridState.animateScrollToItem(0) }
@@ -78,9 +84,7 @@ fun FeedScreen(
                 .padding(padding)
         ) {
             FilterRow(
-                selectedRating = uiState.filters.rating,
                 selectedSort = uiState.filters.sortOrder,
-                onRatingSelected = viewModel::setRating,
                 onSortSelected = viewModel::setSortOrder
             )
 
@@ -178,29 +182,21 @@ private fun PostsGrid(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilterRow(
-    selectedRating: RatingFilter,
     selectedSort: SortOrder,
-    onRatingSelected: (RatingFilter) -> Unit,
     onSortSelected: (SortOrder) -> Unit
 ) {
-    Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf(RatingFilter.EXPLICIT, RatingFilter.QUESTIONABLE, RatingFilter.SAFE, RatingFilter.ALL).forEach { rating ->
-                FilterChip(
-                    selected = selectedRating == rating,
-                    onClick = { onRatingSelected(rating) },
-                    label = { Text(rating.label) }
-                )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            listOf(SortOrder.DEFAULT, SortOrder.SCORE_DESC, SortOrder.ID_DESC).forEach { sort ->
-                FilterChip(
-                    selected = selectedSort == sort,
-                    onClick = { onSortSelected(sort) },
-                    label = { Text(sort.label) }
-                )
-            }
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        listOf(SortOrder.DEFAULT, SortOrder.SCORE_DESC, SortOrder.ID_DESC).forEach { sort ->
+            FilterChip(
+                selected = selectedSort == sort,
+                onClick = { onSortSelected(sort) },
+                label = { Text(sort.label) }
+            )
         }
     }
 }
@@ -222,6 +218,8 @@ fun userFriendlyError(t: Throwable): String {
             "Límite de solicitudes alcanzado. Espera un momento e inténtalo de nuevo."
 
         msg.contains("Respuesta inesperada", ignoreCase = true) -> msg
+
+        msg.contains("búsqueda de Rule34 no está disponible", ignoreCase = true) -> msg
 
         t is java.io.IOException ->
             "Error de red. Verifica tu conexión e inténtalo de nuevo."

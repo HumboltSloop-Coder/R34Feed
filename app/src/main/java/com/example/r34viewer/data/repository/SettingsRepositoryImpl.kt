@@ -2,6 +2,7 @@ package com.example.r34viewer.data.repository
 
 import com.example.r34viewer.data.local.datastore.SecureApiKeyStorage
 import com.example.r34viewer.data.local.datastore.SettingsDataStore
+import com.example.r34viewer.domain.model.AppColors
 import com.example.r34viewer.domain.model.FeedImageSize
 import com.example.r34viewer.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
@@ -18,8 +19,13 @@ class SettingsRepositoryImpl @Inject constructor(
 ) : SettingsRepository {
 
     // In-memory mirrors so UI can react immediately after save/clear in the same process.
-    private val _apiKeyFlow = MutableStateFlow(secureApiKeyStorage.getApiKey())
-    private val _userIdFlow = MutableStateFlow(secureApiKeyStorage.getUserId())
+    // A broken Keystore/EncryptedSharedPreferences must not crash DI on startup.
+    private val _apiKeyFlow = MutableStateFlow(
+        runCatching { secureApiKeyStorage.getApiKey() }.getOrNull()
+    )
+    private val _userIdFlow = MutableStateFlow(
+        runCatching { secureApiKeyStorage.getUserId() }.getOrNull()
+    )
 
     override val apiKeyFlow: Flow<String?> = _apiKeyFlow.asStateFlow()
     override val userIdFlow: Flow<String?> = _userIdFlow.asStateFlow()
@@ -31,8 +37,9 @@ class SettingsRepositoryImpl @Inject constructor(
     override val isDarkThemeFlow: Flow<Boolean> = settingsDataStore.isDarkThemeFlow
     override val feedImageSizeFlow: Flow<FeedImageSize> = settingsDataStore.feedImageSizeFlow
     override val hideAiGeneratedFlow: Flow<Boolean> = settingsDataStore.hideAiGeneratedFlow
-
-    override suspend fun getApiKey(): String? = secureApiKeyStorage.getApiKey()
+    override val fullscreenMaxQualityFlow: Flow<Boolean> = settingsDataStore.fullscreenMaxQualityFlow
+    override val customColorsFlow: Flow<AppColors> = settingsDataStore.customColorsFlow
+    override val negativeTagsFlow: Flow<List<String>> = settingsDataStore.negativeTagsFlow
 
     override suspend fun getUserId(): String? = secureApiKeyStorage.getUserId()
 
@@ -60,5 +67,21 @@ class SettingsRepositoryImpl @Inject constructor(
 
     override suspend fun setHideAiGenerated(enabled: Boolean) {
         settingsDataStore.setHideAiGenerated(enabled)
+    }
+
+    override suspend fun setFullscreenMaxQuality(enabled: Boolean) {
+        settingsDataStore.setFullscreenMaxQuality(enabled)
+    }
+
+    override suspend fun setCustomColors(colors: AppColors) {
+        settingsDataStore.setCustomColors(colors)
+    }
+
+    override suspend fun addNegativeTag(tag: String) {
+        settingsDataStore.addNegativeTag(tag)
+    }
+
+    override suspend fun removeNegativeTag(tag: String) {
+        settingsDataStore.removeNegativeTag(tag)
     }
 }

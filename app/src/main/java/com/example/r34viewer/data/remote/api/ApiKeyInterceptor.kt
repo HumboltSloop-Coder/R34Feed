@@ -6,12 +6,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
-import java.io.IOException
 import javax.inject.Inject
-
-class MissingApiCredentialsException(
-    message: String = "Faltan credenciales de API. Ve a Ajustes e introduce tu API Key y User ID."
-) : IOException(message)
 
 /**
  * Injects the Rule34 credentials (api_key + user_id) into every request.
@@ -52,21 +47,19 @@ class ApiKeyInterceptor @Inject constructor(
         val request = originalRequest.newBuilder().url(newUrl).build()
         val response = chain.proceed(request)
 
-        // Normalize Rule34's plain-text auth error into a friendly message so callers don't
-        // fail with low-level JSON parsing exceptions.
-        if (!response.isSuccessful) {
-            val raw = response.peekBody(1024).string()
-            if (raw.contains("Missing authentication", ignoreCase = true)) {
-                response.close()
-                val body = MISSING_AUTH_MESSAGE.toResponseBody("text/plain".toMediaType())
-                return Response.Builder()
-                    .request(originalRequest)
-                    .protocol(response.protocol)
-                    .code(response.code)
-                    .message("Missing authentication")
-                    .body(body)
-                    .build()
-            }
+        // Rule34 returns its auth error as a plain-text body with HTTP 200 and an
+        // application/json content type, so we must inspect the body on every response.
+        val raw = response.peekBody(1024).string()
+        if (raw.contains("Missing authentication", ignoreCase = true)) {
+            response.close()
+            val body = MISSING_AUTH_MESSAGE.toResponseBody("text/plain".toMediaType())
+            return Response.Builder()
+                .request(originalRequest)
+                .protocol(response.protocol)
+                .code(401)
+                .message("Missing authentication")
+                .body(body)
+                .build()
         }
 
         return response

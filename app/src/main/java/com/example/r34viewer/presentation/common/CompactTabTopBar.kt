@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun CompactTabTopBar(
     title: String,
+    navigationIcon: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Surface(color = MaterialTheme.colorScheme.surface) {
@@ -30,7 +31,13 @@ fun CompactTabTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                navigationIcon?.invoke()
+                Text(title, style = MaterialTheme.typography.titleLarge)
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 content = actions

@@ -51,12 +51,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -64,7 +67,6 @@ import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.collectAsLazyPagingItems
 import com.example.r34viewer.domain.model.Post
-import com.example.r34viewer.domain.model.RatingFilter
 import com.example.r34viewer.domain.model.SortOrder
 import com.example.r34viewer.domain.model.TagSuggestion
 import com.example.r34viewer.presentation.common.CompactTabTopBar
@@ -104,6 +106,28 @@ fun SearchScreen(
     var filtersExpanded by rememberSaveable { mutableStateOf(false) }
     var searchBarVisible by rememberSaveable { mutableStateOf(true) }
     val gridState = rememberLazyGridState()
+    val queryField = remember { mutableStateOf(TextFieldValue(uiState.inputQuery)) }
+
+    // A new search must start at the first result. The last applied query is saved with the
+    // destination, so coming back from the detail screen keeps the previous scroll position
+    // instead of jumping to the top again.
+    var lastScrolledQuery by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(uiState.submittedQuery, posts.loadState.refresh) {
+        if (lastScrolledQuery != uiState.submittedQuery) {
+            gridState.scrollToItem(0)
+            lastScrolledQuery = uiState.submittedQuery
+        }
+    }
+
+    // Keep the field in sync when the ViewModel changes the query (accepting a tag, clearing,
+    // submitting...) and place the caret at the end of the inserted tag.
+    LaunchedEffect(uiState.inputQuery) {
+        val text = uiState.inputQuery
+        if (queryField.value.text != text) {
+            val caret = if (text.endsWith(" ")) text.length - 1 else text.length
+            queryField.value = TextFieldValue(text, TextRange(caret))
+        }
+    }
 
     // Oculta la barra al hacer scroll hacia abajo y la muestra al hacer scroll hacia arriba.
     LaunchedEffect(gridState) {
@@ -141,9 +165,10 @@ fun SearchScreen(
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
-                        value = uiState.inputQuery,
+                        value = queryField.value,
                         onValueChange = { value ->
-                            viewModel.onQueryChange(value)
+                            queryField.value = value
+                            viewModel.onQueryChange(value.text)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -229,9 +254,7 @@ fun SearchScreen(
                     SearchFilterMenu(
                         expanded = filtersExpanded,
                         onExpandedChange = { filtersExpanded = !filtersExpanded },
-                        selectedRating = uiState.rating,
                         selectedSort = uiState.sortOrder,
-                        onRatingSelected = viewModel::onRatingChange,
                         onSortSelected = viewModel::onSortChange
                     )
                 }
@@ -344,9 +367,7 @@ private fun ResultsGrid(
 private fun SearchFilterMenu(
     expanded: Boolean,
     onExpandedChange: () -> Unit,
-    selectedRating: RatingFilter,
     selectedSort: SortOrder,
-    onRatingSelected: (RatingFilter) -> Unit,
     onSortSelected: (SortOrder) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -359,7 +380,7 @@ private fun SearchFilterMenu(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "Filters: ${selectedRating.label} · ${selectedSort.label}",
+                text = "Filters: ${selectedSort.label}",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface
             )
@@ -375,12 +396,6 @@ private fun SearchFilterMenu(
             exit = fadeOut() + shrinkVertically()
         ) {
             Column(modifier = Modifier.padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Rating", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf(RatingFilter.ALL, RatingFilter.EXPLICIT, RatingFilter.QUESTIONABLE, RatingFilter.SAFE).forEach { r ->
-                        FilterChip(selected = selectedRating == r, onClick = { onRatingSelected(r) }, label = { Text(r.label) })
-                    }
-                }
                 Text("Orden", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(SortOrder.DEFAULT, SortOrder.SCORE_DESC, SortOrder.ID_DESC).forEach { s ->

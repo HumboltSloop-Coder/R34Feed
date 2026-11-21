@@ -5,9 +5,12 @@ import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.map
 import com.example.r34viewer.data.local.db.FavoriteFolderEntity
+import com.example.r34viewer.data.local.db.FavoritePostFolderEntity
 import com.example.r34viewer.data.local.db.FavoriteProfileEntity
+import com.example.r34viewer.data.local.db.FavoriteTagEntity
 import com.example.r34viewer.data.local.db.FavoritesDao
 import com.example.r34viewer.data.local.db.toDomain
+import com.example.r34viewer.data.local.db.toEntity
 import com.example.r34viewer.data.local.db.toFavoriteEntity
 import com.example.r34viewer.data.remote.Rule34PagingSource
 import com.example.r34viewer.data.remote.api.Rule34ApiService
@@ -16,6 +19,9 @@ import com.example.r34viewer.domain.model.FavoriteFolder
 import com.example.r34viewer.domain.model.FavoriteFolderFilter
 import com.example.r34viewer.domain.model.FavoriteImportResult
 import com.example.r34viewer.domain.model.FavoriteProfile
+import com.example.r34viewer.domain.model.FavoriteTag
+import com.example.r34viewer.domain.model.FavoriteTagBookmark
+import com.example.r34viewer.domain.model.FolderMembership
 import com.example.r34viewer.domain.model.Post
 import com.example.r34viewer.domain.model.SearchFilters
 import com.example.r34viewer.domain.repository.PostRepository
@@ -39,11 +45,13 @@ class PostRepositoryImpl @Inject constructor(
     override fun getPosts(filters: SearchFilters): Flow<PagingData<Post>> {
         return Pager(
             config = PagingConfig(
-                pageSize = PAGE_SIZE,
-                initialLoadSize = PAGE_SIZE,
+                pageSize = SearchFilters.PAGE_SIZE,
+                initialLoadSize = SearchFilters.PAGE_SIZE,
                 prefetchDistance = PREFETCH_DISTANCE,
                 enablePlaceholders = false
             ),
+            // A bookmarked position resumes from its page instead of loading everything again.
+            initialKey = filters.startPage.coerceAtLeast(0),
             pagingSourceFactory = {
                 Rule34PagingSource(
                     apiService = apiService,
@@ -55,27 +63,33 @@ class PostRepositoryImpl @Inject constructor(
         }
     }
 
-    override fun getFavorites(): Flow<List<Post>> =
-        favoritesDao.getAllFavorites().map { entities -> entities.map { it.toDomain() } }
+    override fun getFavorites(descending: Boolean): Flow<List<Post>> =
+        favoritesDao.getAllFavorites(descending).map { entities -> entities.map { it.toDomain() } }
 
-    override fun getFavorites(filter: FavoriteFolderFilter): Flow<List<Post>> {
+    override fun getFavorites(
+        filter: FavoriteFolderFilter,
+        descending: Boolean
+    ): Flow<List<Post>> {
         val flow = when (filter) {
-            FavoriteFolderFilter.All -> favoritesDao.getAllFavorites()
-            FavoriteFolderFilter.Unfiled -> favoritesDao.getFavoritesWithoutFolder()
-            is FavoriteFolderFilter.Folder -> favoritesDao.getFavoritesByFolder(filter.id)
+            FavoriteFolderFilter.All -> favoritesDao.getAllFavorites(descending)
+            FavoriteFolderFilter.Unfiled -> favoritesDao.getFavoritesWithoutFolder(descending)
+            is FavoriteFolderFilter.Folder ->
+                favoritesDao.getFavoritesByFolder(filter.id, descending)
         }
         return flow.map { entities -> entities.map { it.toDomain() } }
     }
 
     override fun getProfileFavorites(
         profileUserId: String,
-        filter: FavoriteFolderFilter
+        filter: FavoriteFolderFilter,
+        descending: Boolean
     ): Flow<List<Post>> {
         val flow = when (filter) {
-            FavoriteFolderFilter.All -> favoritesDao.getProfileFavorites(profileUserId)
-            FavoriteFolderFilter.Unfiled -> favoritesDao.getProfileFavoritesWithoutFolder(profileUserId)
+            FavoriteFolderFilter.All -> favoritesDao.getProfileFavorites(profileUserId, descending)
+            FavoriteFolderFilter.Unfiled ->
+                favoritesDao.getProfileFavoritesWithoutFolder(profileUserId, descending)
             is FavoriteFolderFilter.Folder ->
-                favoritesDao.getProfileFavoritesByFolder(profileUserId, filter.id)
+                favoritesDao.getProfileFavoritesByFolder(profileUserId, filter.id, descending)
         }
         return flow.map { entities -> entities.map { it.toDomain() } }
     }
@@ -91,14 +105,11 @@ class PostRepositoryImpl @Inject constructor(
 
     override fun isFavorite(postId: Int): Flow<Boolean> = favoritesDao.isFavorite(postId)
 
-    override suspend fun toggleFavorite(post: Post) {
-        val existing = favoritesDao.getFavoriteById(post.id)
-        if (existing != null) {
-            favoritesDao.deleteFavorite(post.id)
-        } else {
-            favoritesDao.insertFavorite(post.toFavoriteEntity())
-        }
-    }
+    override suspend fun toggleFavorite(post: Post) =
+        favoritesDao.toggleFavoriteAtomic(post.toFavoriteEntity())
+
+    override suspend fun addFavorite(post: Post) =
+        favoritesDao.addFavoriteAtomic(post.toFavoriteEntity())
 
     override suspend fun getFavoriteById(postId: Int): Post? =
         favoritesDao.getFavoriteById(postId)?.toDomain()
@@ -110,6 +121,8 @@ class PostRepositoryImpl @Inject constructor(
         }
         val folders = favoritesDao.getFoldersSnapshot()
         val favorites = favoritesDao.getFavoritesSnapshot()
+        val folderIdsByPost = favoritesDao.getFavoriteFolderLinksSnapshot()
+            .groupBy({ it.postId }) { it.folderId }
 
         return buildString {
             appendLine(FAVORITES_BACKUP_HEADER_V2)
@@ -117,13 +130,13 @@ class PostRepositoryImpl @Inject constructor(
             folders.forEach { folder ->
                 appendLine("[Carpeta: \"${folder.name.escapeExportName()}\"]")
                 favorites.asSequence()
-                    .filter { it.folderId == folder.id }
+                    .filter { folder.id in folderIdsByPost[it.id].orEmpty() }
                     .forEach { appendLine(it.id) }
                 appendLine()
             }
             appendLine("[Sin carpeta]")
             favorites.asSequence()
-                .filter { it.folderId == null }
+                .filter { folderIdsByPost[it.id].isNullOrEmpty() }
                 .forEach { appendLine(it.id) }
         }
     }
@@ -133,10 +146,11 @@ class PostRepositoryImpl @Inject constructor(
         onProgress: (completed: Int, total: Int) -> Unit
     ): FavoriteImportResult {
         val backup = parseFavoriteBackup(backupText)
-        val total = backup.sections.sumOf { it.postIds.size }
+        val allPostIds = backup.sections.flatMap { it.postIds }.toSet()
+        val total = allPostIds.size
+        val processedIds = mutableSetOf<Int>()
+        val restoredIds = mutableSetOf<Int>()
         val unavailableIds = mutableListOf<Int>()
-        var restoredCount = 0
-        var completed = 0
         var requestsMade = 0
         var consecutiveEmptyResponses = 0
         var stoppedAtPostId: Int? = null
@@ -150,27 +164,21 @@ class PostRepositoryImpl @Inject constructor(
             .distinct()
             .associateWith { getOrCreateFolderId(it, profileUserId) }
 
+        fun markProcessed(postId: Int) {
+            if (processedIds.add(postId)) onProgress(processedIds.size, total)
+        }
+
         importLoop@ for (section in backup.sections) {
             val folderId = section.folderName?.let { folderIds.getValue(it) }
-            postLoop@ for (postId in section.postIds) {
+            for (postId in section.postIds) {
                 try {
                     val existing = if (profileUserId.isBlank()) {
                         favoritesDao.getFavoriteById(postId)
                     } else {
                         favoritesDao.getProfileFavoriteById(postId, profileUserId)
                     }
-                    if (existing != null) {
-                        if (profileUserId.isBlank()) {
-                            favoritesDao.moveFavoritesToFolder(listOf(postId), folderId)
-                        } else {
-                            favoritesDao.moveProfileFavoritesToFolder(
-                                listOf(postId),
-                                folderId,
-                                profileUserId
-                            )
-                        }
-                        restoredCount++
-                    } else {
+                    var favoriteReady = existing != null
+                    if (!favoriteReady) {
                         var post: com.example.r34viewer.data.remote.dto.PostDto? = null
                         var responseReceived = false
                         var emptyBodyRetries = 0
@@ -202,40 +210,54 @@ class PostRepositoryImpl @Inject constructor(
                             }
                         }
                         if (stoppedReason != null) {
-                            completed++
-                            onProgress(completed, total)
+                            markProcessed(postId)
                             break@importLoop
                         }
                         if (post == null) {
                             if (!receivedEmptyBody) unavailableIds += postId
                         } else {
+                            val nextPriority = (favoritesDao.getMaxPriority(profileUserId) ?: 0) + 1
                             favoritesDao.insertFavorite(
                                 post.toDomain().toFavoriteEntity(
-                                    folderId = folderId,
+                                    priority = nextPriority,
                                     profileUserId = profileUserId
                                 )
                             )
-                            restoredCount++
+                            favoriteReady = true
                         }
+                    }
+                    if (favoriteReady) {
+                        if (folderId != null) {
+                            favoritesDao.insertFavoritePostFolders(
+                                listOf(
+                                    FavoritePostFolderEntity(
+                                        postId = postId,
+                                        folderId = folderId,
+                                        profileUserId = profileUserId
+                                    )
+                                )
+                            )
+                        } else {
+                            favoritesDao.clearFavoriteFolders(listOf(postId), profileUserId)
+                        }
+                        restoredIds += postId
                     }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
                     stoppedAtPostId = postId
                     stoppedReason = favoriteImportError(error)
-                    completed++
-                    onProgress(completed, total)
+                    markProcessed(postId)
                     break@importLoop
                 }
 
-                completed++
-                onProgress(completed, total)
+                markProcessed(postId)
             }
         }
 
         return FavoriteImportResult(
             totalPostCount = total,
-            restoredPostCount = restoredCount,
+            restoredPostCount = restoredIds.size,
             unavailablePostIds = unavailableIds,
             profileUserId = profileUserId.takeIf { it.isNotBlank() },
             stoppedAtPostId = stoppedAtPostId,
@@ -265,6 +287,7 @@ class PostRepositoryImpl @Inject constructor(
 
     override suspend fun deleteFavoriteProfile(profileUserId: String) {
         favoritesDao.deleteProfileFavorites(profileUserId)
+        favoritesDao.deleteProfileFavoriteFolders(profileUserId)
         favoritesDao.deleteProfileFolders(profileUserId)
         favoritesDao.deleteFavoriteProfile(profileUserId)
     }
@@ -279,15 +302,64 @@ class PostRepositoryImpl @Inject constructor(
     override suspend fun removeFavorites(postIds: List<Int>) {
         if (postIds.isEmpty()) return
         favoritesDao.deleteFavorites(postIds)
+        favoritesDao.clearFavoriteFolders(postIds, "")
     }
 
-    override suspend fun moveFavoritesToFolder(postIds: List<Int>, folderId: Long?) {
+    override suspend fun addFavoritesToFolder(postIds: List<Int>, folderId: Long) {
         if (postIds.isEmpty()) return
-        favoritesDao.moveFavoritesToFolder(postIds, folderId)
+        favoritesDao.insertFavoritePostFolders(
+            postIds.map { postId ->
+                FavoritePostFolderEntity(postId = postId, folderId = folderId, profileUserId = "")
+            }
+        )
     }
+
+    override suspend fun removeFavoritesFromFolder(postIds: List<Int>, folderId: Long) {
+        if (postIds.isEmpty()) return
+        favoritesDao.removeFavoritesFromFolder(postIds, folderId, "")
+    }
+
+    override suspend fun clearFavoritesFolders(postIds: List<Int>) {
+        if (postIds.isEmpty()) return
+        favoritesDao.clearFavoriteFolders(postIds, "")
+    }
+
+    override fun getFavoriteFolderMemberships(profileUserId: String): Flow<List<FolderMembership>> =
+        favoritesDao.getFavoriteFolderLinks(profileUserId).map { links ->
+            links.map { it.toDomain() }
+        }
+
+    override suspend fun getFavoriteFolderIds(postId: Int): List<Long> =
+        favoritesDao.getFolderIdsForPost(postId)
+
+    override fun getFavoriteTags(): Flow<List<FavoriteTag>> =
+        favoritesDao.getFavoriteTags().map { tags -> tags.map { it.toDomain() } }
+
+    override suspend fun addFavoriteTag(query: String): Boolean {
+        val normalized = FavoriteTag.normalize(query) ?: return false
+        val id = favoritesDao.insertFavoriteTag(FavoriteTagEntity(query = normalized))
+        return id != -1L
+    }
+
+    override suspend fun removeFavoriteTag(tagId: Long) {
+        favoritesDao.deleteBookmarksForTag(tagId)
+        favoritesDao.deleteFavoriteTag(tagId)
+    }
+
+    override fun getFavoriteTagBookmarks(): Flow<List<FavoriteTagBookmark>> =
+        favoritesDao.getFavoriteTagBookmarks().map { bookmarks -> bookmarks.map { it.toDomain() } }
+
+    override suspend fun saveFavoriteTagBookmark(bookmark: FavoriteTagBookmark): Long =
+        favoritesDao.insertFavoriteTagBookmark(bookmark.toEntity())
+
+    override suspend fun deleteFavoriteTagBookmark(bookmarkId: Long) {
+        favoritesDao.deleteFavoriteTagBookmark(bookmarkId)
+    }
+
+    override suspend fun swapFavoritePriorities(firstId: Int, secondId: Int) =
+        favoritesDao.swapFavoritePrioritiesAtomic(firstId, secondId)
 
     companion object {
-        private const val PAGE_SIZE = 20
         private const val PREFETCH_DISTANCE = 4
         private const val IMPORT_REQUEST_INTERVAL_MS = 600L
         private const val EMPTY_RESPONSE_RETRY_DELAY_MS = 1_000L
@@ -327,7 +399,6 @@ private fun parseFavoriteBackup(text: String): FavoriteBackup {
 
     val sections = mutableListOf<FavoriteBackupSection>()
     val folderNames = mutableSetOf<String>()
-    val postIds = mutableSetOf<Int>()
     var currentFolder: String? = null
     var currentSectionStarted = false
     var currentPostIds = mutableListOf<Int>()
@@ -369,8 +440,8 @@ private fun parseFavoriteBackup(text: String): FavoriteBackup {
                 require(currentSectionStarted) { "El archivo contiene un ID fuera de una carpeta." }
                 val postId = line.toIntOrNull()
                 require(postId != null && postId > 0) { "El archivo contiene un ID no válido: $line." }
-                require(postIds.add(postId)) { "El archivo repite el ID $postId." }
-                currentPostIds += postId
+                // A post may legitimately appear in several folder sections.
+                if (postId !in currentPostIds) currentPostIds += postId
             }
 
             else -> throw IllegalArgumentException("Línea no reconocida en el archivo: $line")

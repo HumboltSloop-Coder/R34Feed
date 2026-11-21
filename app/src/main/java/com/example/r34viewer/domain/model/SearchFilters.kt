@@ -1,12 +1,5 @@
 package com.example.r34viewer.domain.model
 
-enum class RatingFilter(val apiValue: String?, val label: String) {
-    ALL(null, "All"),
-    SAFE("safe", "Safe"),
-    QUESTIONABLE("questionable", "Questionable"),
-    EXPLICIT("explicit", "Explicit")
-}
-
 enum class SortOrder(val apiTag: String?, val label: String) {
     DEFAULT(null, "Default"),
     SCORE_DESC("sort:score:desc", "Score"),
@@ -16,20 +9,35 @@ enum class SortOrder(val apiTag: String?, val label: String) {
 
 data class SearchFilters(
     val query: String = "",
-    val rating: RatingFilter = RatingFilter.ALL,
     val sortOrder: SortOrder = SortOrder.DEFAULT,
-    val hideAiGenerated: Boolean = false
+    val hideAiGenerated: Boolean = false,
+    val negativeTags: List<String> = emptyList(),
+    /** Paging page used as the first load key; lets a bookmark resume far down the results. */
+    val startPage: Int = 0
 ) {
     fun toApiTags(): String {
         val parts = mutableListOf<String>()
-        if (query.isNotBlank()) parts += query.trim()
-        rating.apiValue?.let { parts += "rating:$it" }
-        sortOrder.apiTag?.let { parts += it }
-        if (hideAiGenerated && AI_GENERATED_TAG !in parts) parts += AI_GENERATED_TAG
+        val seen = mutableSetOf<String>()
+
+        fun addTag(token: String) {
+            val trimmed = token.trim()
+            val normalized = trimmed.removePrefix("-").trim().lowercase()
+            if (normalized.isNotBlank() && seen.add(normalized)) {
+                parts += trimmed
+            }
+        }
+
+        if (query.isNotBlank()) {
+            query.trim().split(Regex("\\s+")).forEach { addTag(it) }
+        }
+        sortOrder.apiTag?.let { addTag(it) }
+        negativeTags.forEach { addTag("-$it") }
+        if (hideAiGenerated) addTag(AI_GENERATED_TAG)
         return parts.joinToString(" ")
     }
 
     companion object {
         const val AI_GENERATED_TAG = "-ai_generated"
+        const val PAGE_SIZE = 20
     }
 }

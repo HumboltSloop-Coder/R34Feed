@@ -1,5 +1,6 @@
 package com.example.r34viewer.domain.usecase
 
+import com.example.r34viewer.domain.model.AppColors
 import com.example.r34viewer.domain.model.FeedImageSize
 import com.example.r34viewer.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.Flow
@@ -70,4 +71,46 @@ class SetHideAiGeneratedUseCase @Inject constructor(
     private val repository: SettingsRepository
 ) {
     suspend operator fun invoke(enabled: Boolean) = repository.setHideAiGenerated(enabled)
+}
+
+class ObserveFullscreenMaxQualityUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    operator fun invoke(): Flow<Boolean> = repository.fullscreenMaxQualityFlow
+}
+
+class SetFullscreenMaxQualityUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    suspend operator fun invoke(enabled: Boolean) = repository.setFullscreenMaxQuality(enabled)
+}
+
+class ObserveCustomColorsUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    operator fun invoke(): Flow<AppColors> = repository.customColorsFlow
+}
+
+class SetCustomColorsUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    suspend operator fun invoke(colors: AppColors) = repository.setCustomColors(colors)
+}
+
+class ObserveNegativeTagsUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    operator fun invoke(): Flow<List<String>> = repository.negativeTagsFlow
+}
+
+class AddNegativeTagUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    suspend operator fun invoke(tag: String) = repository.addNegativeTag(tag)
+}
+
+class RemoveNegativeTagUseCase @Inject constructor(
+    private val repository: SettingsRepository
+) {
+    suspend operator fun invoke(tag: String) = repository.removeNegativeTag(tag)
 }

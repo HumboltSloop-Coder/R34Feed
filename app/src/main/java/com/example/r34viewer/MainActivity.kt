@@ -20,8 +20,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             val appNavViewModel: AppNavViewModel = hiltViewModel()
             val isDarkTheme by appNavViewModel.isDarkTheme.collectAsStateWithLifecycle()
+            val customColors by appNavViewModel.customColors.collectAsStateWithLifecycle()
 
-            R34ViewerTheme(darkTheme = isDarkTheme) {
+            R34ViewerTheme(darkTheme = isDarkTheme, customColors = customColors) {
                 AppNavGraph(appNavViewModel = appNavViewModel)
             }
         }

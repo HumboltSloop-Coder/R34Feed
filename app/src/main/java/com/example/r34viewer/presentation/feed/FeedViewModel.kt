@@ -6,12 +6,12 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import com.example.r34viewer.domain.model.FeedImageSize
 import com.example.r34viewer.domain.model.Post
-import com.example.r34viewer.domain.model.RatingFilter
 import com.example.r34viewer.domain.model.SearchFilters
 import com.example.r34viewer.domain.model.SortOrder
 import com.example.r34viewer.domain.usecase.GetPostsUseCase
 import com.example.r34viewer.domain.usecase.ObserveFeedImageSizeUseCase
 import com.example.r34viewer.domain.usecase.ObserveHideAiGeneratedUseCase
+import com.example.r34viewer.domain.usecase.ObserveNegativeTagsUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +33,7 @@ data class FeedUiState(
 class FeedViewModel @Inject constructor(
     getPostsUseCase: GetPostsUseCase,
     observeHideAiGeneratedUseCase: ObserveHideAiGeneratedUseCase,
+    observeNegativeTagsUseCase: ObserveNegativeTagsUseCase,
     observeFeedImageSizeUseCase: ObserveFeedImageSizeUseCase
 ) : ViewModel() {
 
@@ -48,23 +49,21 @@ class FeedViewModel @Inject constructor(
         .cachedIn(viewModelScope)
 
     init {
-        // Changing the setting must refresh the main feed automatically.
+        // Changing the settings must refresh the main feed automatically.
         viewModelScope.launch {
             observeHideAiGeneratedUseCase().collect { hideAi ->
                 _uiState.update { it.copy(filters = it.filters.copy(hideAiGenerated = hideAi)) }
             }
         }
-    }
-
-    fun setRating(rating: RatingFilter) {
-        _uiState.update { it.copy(filters = it.filters.copy(rating = rating)) }
+        viewModelScope.launch {
+            observeNegativeTagsUseCase().collect { tags ->
+                _uiState.update { it.copy(filters = it.filters.copy(negativeTags = tags)) }
+            }
+        }
     }
 
     fun setSortOrder(sortOrder: SortOrder) {
         _uiState.update { it.copy(filters = it.filters.copy(sortOrder = sortOrder)) }
     }
 
-    fun setQuery(query: String) {
-        _uiState.update { it.copy(filters = it.filters.copy(query = query.trim())) }
-    }
 }
