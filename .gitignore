@@ -12,6 +12,9 @@ captures/
 *.jks
 *.keystore
 *.p12
+# SSH / claves privadas: nunca deben entrar en el repositorio
+id_ed25519*
+Nix*
 keystore.properties
 .env
 .env.*
